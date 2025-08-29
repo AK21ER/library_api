@@ -1,82 +1,114 @@
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.permissions import AllowAny
-from .models import Book, Borrow
-from .serializers import BookSerializer, BorrowSerializer
-from accounts.models import CustomUser
-from .serializers import UserSerializer
-from django.shortcuts import get_object_or_404
+from django.db import transaction as db_tx
 from django.utils import timezone
+from rest_framework import viewsets, status, mixins
+from rest_framework.response import Response
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
+
+from .models import Book, Transaction
+from .serializers import (
+    BookSerializer,
+    TransactionSerializer,
+    BorrowCreateSerializer,
+)
+from .permissions import IsAdminOrReadOnly
+from .filters import BookFilter
 
 # Books CRUD
 class BookViewSet(viewsets.ModelViewSet):
     queryset = Book.objects.all()
     serializer_class = BookSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated & IsAdminOrReadOnly]
+    filterset_class = BookFilter
+    search_fields = ["title", "author", "isbn"]
+    ordering_fields = ["title", "author", "published_date", "copies_available"]
 
-    # Filter available books
+# Transactions list (read-only). Users see own; admins see all
+class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = TransactionSerializer
+
     def get_queryset(self):
-        queryset = Book.objects.all()
-        available = self.request.query_params.get("available")
-        title = self.request.query_params.get("title")
-        author = self.request.query_params.get("author")
-        isbn = self.request.query_params.get("isbn")
-        if available == "true":
-            queryset = queryset.filter(available_copies__gt=0)
-        if title:
-            queryset = queryset.filter(title__icontains=title)
-        if author:
-            queryset = queryset.filter(author__icontains=author)
-        if isbn:
-            queryset = queryset.filter(isbn=isbn)
-        return queryset
+        qs = Transaction.objects.select_related("book", "user")
+        if self.request.user.is_staff:
+            return qs
+        return qs.filter(user=self.request.user)
 
-# Users CRUD
-class UserViewSet(viewsets.ModelViewSet):
-    queryset = CustomUser.objects.all()
-    serializer_class = UserSerializer
+# Borrows endpoint that matches README:
+# POST /api/borrows/ -> checkout
+# PUT  /api/borrows/{id}/ -> return (close) a borrow
+class BorrowViewSet(mixins.ListModelMixin,
+                    mixins.RetrieveModelMixin,
+                    mixins.CreateModelMixin,
+                    mixins.UpdateModelMixin,
+                    viewsets.GenericViewSet):
+    permission_classes = [IsAuthenticated]
+    queryset = Transaction.objects.select_related("book", "user")
 
-# Borrow / Checkout / Return
-class BorrowViewSet(viewsets.ModelViewSet):
-    queryset = Borrow.objects.all()
-    serializer_class = BorrowSerializer
+    def get_serializer_class(self):
+        if self.action == "create":
+            return BorrowCreateSerializer
+        return TransactionSerializer
 
-    @action(detail=True, methods=["post"])
-    def checkout(self, request, pk=None):
-        book = get_object_or_404(Book, pk=pk)
-        user_id = request.data.get("user_id")
-        user = get_object_or_404(CustomUser, pk=user_id)
+    def list(self, request, *args, **kwargs):
+        qs = self.get_queryset()
+        if not request.user.is_staff:
+            qs = qs.filter(user=request.user)
+        page = self.paginate_queryset(qs)
+        ser = TransactionSerializer(page or qs, many=True)
+        if page is not None:
+            return self.get_paginated_response(ser.data)
+        return Response(ser.data)
 
-        # Check if copies available
-        if book.available_copies < 1:
-            return Response({"error": "No copies available"}, status=status.HTTP_400_BAD_REQUEST)
+    # Checkout
+    def create(self, request, *args, **kwargs):
+        ser = BorrowCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        book_id = ser.validated_data["book_id"]
 
-        # Check if user already borrowed
-        if Borrow.objects.filter(book=book, borrower_name=user.username, status="OUT").exists():
-            return Response({"error": "User already borrowed this book"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            book = Book.objects.get(pk=book_id)
+        except Book.DoesNotExist:
+            return Response({"detail": "Book not found."}, status=404)
 
-        borrow = Borrow.objects.create(
-            book=book,
-            borrower_name=user.username,
-            borrow_date=timezone.now(),
-            status="OUT"
-        )
-        book.available_copies -= 1
-        book.save()
-        serializer = BorrowSerializer(borrow)
-        return Response(serializer.data)
+        user = request.user
 
-    @action(detail=True, methods=["post"])
-    def return_book(self, request, pk=None):
-        borrow = get_object_or_404(Borrow, pk=pk)
-        if borrow.status != "OUT":
-            return Response({"error": "Book is not checked out"}, status=status.HTTP_400_BAD_REQUEST)
-        borrow.status = "AVL"
-        borrow.return_date = timezone.now()
-        borrow.save()
-        book = borrow.book
-        book.available_copies += 1
-        book.save()
-        serializer = BorrowSerializer(borrow)
-        return Response(serializer.data)
+        with db_tx.atomic():
+            # lock the row to avoid race conditions
+            book = Book.objects.select_for_update().get(pk=book.pk)
+
+            if book.copies_available <= 0:
+                return Response({"detail": "No copies available."}, status=400)
+
+            if Transaction.objects.filter(user=user, book=book, status=Transaction.OUT).exists():
+                return Response({"detail": "Already checked out."}, status=400)
+
+            tx = Transaction.objects.create(user=user, book=book, status=Transaction.OUT)
+            book.copies_available -= 1
+            book.save(update_fields=["copies_available"])
+
+        return Response(TransactionSerializer(tx).data, status=201)
+
+    # Return (close) a borrow
+    def update(self, request, *args, **kwargs):
+        try:
+            tx = Transaction.objects.select_related("book").get(pk=kwargs["pk"])
+        except Transaction.DoesNotExist:
+            return Response({"detail": "Borrow not found."}, status=404)
+
+        # Only owner or admin can return
+        if not (request.user.is_staff or tx.user == request.user):
+            return Response({"detail": "Not allowed."}, status=403)
+
+        if tx.status == Transaction.IN:
+            return Response({"detail": "Already returned."}, status=400)
+
+        with db_tx.atomic():
+            book = Book.objects.select_for_update().get(pk=tx.book_id)
+            tx.status = Transaction.IN
+            tx.return_date = timezone.now()
+            tx.save(update_fields=["status", "return_date"])
+
+            book.copies_available += 1
+            book.save(update_fields=["copies_available"])
+
+        return Response(TransactionSerializer(tx).data, status=200)

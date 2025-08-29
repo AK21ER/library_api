@@ -1,9 +1,13 @@
 from django.db import models
-from django.contrib.auth import get_user_model
+from django.contrib.auth.models import User
+from django.utils import timezone
+from django.conf import settings
+
+
 from django.core.validators import MinValueValidator
 
 
-User = get_user_model()
+
 STATUS_CHOICES = [
     ("AVL", "Available"),
     ("OUT", "Checked Out"),
@@ -27,19 +31,20 @@ def __str__(self):
 
 
 class Transaction(models.Model):
-    CHECKED_OUT = 'OUT'
-    RETURNED = 'IN'
+    OUT = "out"
+    IN = "in"
+
     STATUS_CHOICES = [
-    (CHECKED_OUT, 'Checked Out'),
-    (RETURNED, 'Returned'),
+        (OUT, "Checked out"),
+        (IN, "Returned"),
     ]
 
-
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='transactions')
-    book = models.ForeignKey(Book, on_delete=models.CASCADE, related_name='transactions')
-    checkout_date = models.DateTimeField(auto_now_add=True)
+    book = models.ForeignKey(Book, on_delete=models.CASCADE)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    status = models.CharField(max_length=3, choices=[(IN, "Returned"), (OUT, "Borrowed")])
+    borrow_date = models.DateTimeField(auto_now_add=True)
     return_date = models.DateTimeField(null=True, blank=True)
-    status = models.CharField(max_length=3, choices=STATUS_CHOICES, default=CHECKED_OUT)
+
 
 
 class Meta:
@@ -52,12 +57,12 @@ class Meta:
 def __str__(self):
     return f"{self.user} → {self.book} ({self.status})"
 
-class Borrow(models.Model):
-    book = models.ForeignKey(Book, on_delete=models.CASCADE, related_name="borrows")
-    borrower_name = models.CharField(max_length=255)
-    borrow_date = models.DateTimeField(null=True, blank=True)
-    return_date = models.DateTimeField(null=True, blank=True)
-    status = models.CharField(max_length=3, choices=STATUS_CHOICES, default="AVL")
+# class Borrow(models.Model):
+#     book = models.ForeignKey(Book, on_delete=models.CASCADE, related_name="borrows")
+#     borrower_name = models.CharField(max_length=255)
+#     borrow_date = models.DateTimeField(null=True, blank=True)
+#     return_date = models.DateTimeField(null=True, blank=True)
+#     status = models.CharField(max_length=3, choices=STATUS_CHOICES, default="AVL")
 
-    def __str__(self):
-        return f"{self.borrower_name} - {self.book.title}"
+#     def __str__(self):
+#         return f"{self.borrower_name} - {self.book.title}"

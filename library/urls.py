@@ -1,12 +1,9 @@
-from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import BookViewSet, BorrowViewSet, UserViewSet
+from .views import BookViewSet, BorrowViewSet, TransactionViewSet
 
 router = DefaultRouter()
-router.register(r"books", BookViewSet)
-router.register(r"users", UserViewSet)
-router.register(r"borrows", BorrowViewSet)
+router.register(r"books", BookViewSet, basename="book")
+router.register(r"borrows", BorrowViewSet, basename="borrow")
+router.register(r"transactions", TransactionViewSet, basename="transaction")
 
-urlpatterns = [
-    path("", include(router.urls)),
-]
+urlpatterns = router.urls
