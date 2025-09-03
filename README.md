@@ -6,25 +6,25 @@ All routes are tested via Postman.
 🔑 Authentication Endpoints
 1. Register a New User
 
-POST /api/accounts/register/
+POST /api/accounts/register/    
 Request Body:
 
 {
     "username": "john",
     "email": "john@example.com",
-    "password": "mypassword123",
+    "password": "mypassword123",   registration is success ful
     "password2": "mypassword123"
 }
 
 
 2. Login User (JWT Authentication)
-
+                                            
 POST /api/accounts/login/
 Request Body:
 
 {
   "username": "john_doe",
-  "password": "password123"
+  "password": "password123"   login is successfull and we got access token and refresh token
 }
 
 3. Get All Books
@@ -32,7 +32,7 @@ Request Body:
 GET /api/books/
 Headers:
 
-Authorization: Bearer <your-access-token>
+Authorization: Bearer <your-access-token>  
 
 
 4. Add New Book
@@ -46,12 +46,12 @@ Authorization: Bearer <your-access-token>
 Request Body:
 
 {
-  "title": "The Great Gatsby",
-  "author": "F. Scott Fitzgerald",
-  "isbn": "9780743273565",
-  "published_year": 1925
+    "title": "The Great Gatsby",
+    "author": "F. Scott Fitzgerald",
+    "isbn": "9780743273565",
+    "published_date": "1925-04-10",
+    "copies_available": 5
 }
-
 
 
 5. Get Single Book by ID
@@ -86,7 +86,7 @@ Request Body:
 DELETE /api/books/1/
 Headers:
 
-Authorization: Bearer <your-access-token>
+Authorization: Bearer <your-access-token>  
 
 
 
@@ -111,7 +111,7 @@ Request Body:
 
 9. Return a Book
 
-PUT /api/borrows/1/
+PUT /api/borrows/1/  
 Headers:
 
 Authorization: Bearer <your-access-token>
@@ -142,4 +142,9 @@ Authorization: Bearer <your-access-token>
 GET /api/users/1/
 Headers:
 
-Authorization: Bearer <your-access-token>
+Authorization: Bearer <your-access-token>   
+
+
+
+
+https://www.loom.com/share/f6044174749944feb7d0105e30369612
